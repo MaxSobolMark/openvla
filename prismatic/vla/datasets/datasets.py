@@ -20,7 +20,10 @@ from prismatic.models.backbones.vision import ImageTransform
 from prismatic.util.data_utils import tree_map
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.datasets.rlds import make_interleaved_dataset, make_single_dataset
-from prismatic.vla.datasets.rlds.oxe import OXE_NAMED_MIXTURES, get_oxe_dataset_kwargs_and_weights
+from prismatic.vla.datasets.rlds.oxe import (
+    OXE_NAMED_MIXTURES,
+    get_oxe_dataset_kwargs_and_weights,
+)
 from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
 
 # HuggingFace Default / LLaMa-2 IGNORE_INDEX (for labels)
@@ -39,7 +42,10 @@ class RLDSBatchTransform:
         """Converts a RLDS batch to the format expected by the OpenVLA collator/models."""
         dataset_name, action = rlds_batch["dataset_name"], rlds_batch["action"][0]
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
-        lang = rlds_batch["task"]["language_instruction"].decode().lower()
+        if "language_instruction_text" in rlds_batch["task"]:
+            lang = rlds_batch["task"]["language_instruction_text"]
+        else:
+            lang = rlds_batch["task"]["language_instruction"].decode().lower()
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
         prompt_builder = self.prompt_builder_fn("openvla")
@@ -51,7 +57,9 @@ class RLDSBatchTransform:
             prompt_builder.add_turn(turn["from"], turn["value"])
 
         # Tokenize (w/ `base_tokenizer`)
-        input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
+        input_ids = self.base_tokenizer(
+            prompt_builder.get_prompt(), add_special_tokens=True
+        ).input_ids
         labels = list(input_ids)
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
@@ -64,7 +72,12 @@ class RLDSBatchTransform:
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
 
-        return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels, dataset_name=dataset_name)
+        return dict(
+            pixel_values=pixel_values,
+            input_ids=input_ids,
+            labels=labels,
+            dataset_name=dataset_name,
+        )
 
 
 class RLDSDataset(IterableDataset):
@@ -79,7 +92,11 @@ class RLDSDataset(IterableDataset):
         image_aug: bool = False,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
-        self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
+        self.data_root_dir, self.data_mix, self.batch_transform = (
+            data_root_dir,
+            data_mix,
+            batch_transform,
+        )
 
         # Configure RLDS Dataset(s)
         if self.data_mix in OXE_NAMED_MIXTURES:
@@ -137,7 +154,9 @@ class RLDSDataset(IterableDataset):
         # fmt: on
 
         # Initialize RLDS Dataset
-        self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(rlds_config)
+        self.dataset, self.dataset_length, self.dataset_statistics = self.make_dataset(
+            rlds_config
+        )
 
     def make_dataset(self, rlds_config):
         return make_interleaved_dataset(**rlds_config)
@@ -151,7 +170,9 @@ class RLDSDataset(IterableDataset):
 
     # === Explicitly Unused ===
     def __getitem__(self, idx: int) -> None:
-        raise NotImplementedError("IterableDataset does not implement map-style __getitem__; see __iter__ instead!")
+        raise NotImplementedError(
+            "IterableDataset does not implement map-style __getitem__; see __iter__ instead!"
+        )
 
 
 class EpisodicRLDSDataset(RLDSDataset):
@@ -159,7 +180,9 @@ class EpisodicRLDSDataset(RLDSDataset):
 
     def make_dataset(self, rlds_config):
         per_dataset_kwargs = rlds_config["dataset_kwargs_list"]
-        assert len(per_dataset_kwargs) == 1, "Only support single-dataset `mixes` for episodic datasets."
+        assert (
+            len(per_dataset_kwargs) == 1
+        ), "Only support single-dataset `mixes` for episodic datasets."
 
         return make_single_dataset(
             per_dataset_kwargs[0],
@@ -194,7 +217,10 @@ class DummyDataset(Dataset):
         # per-dimension 1st and 99th action quantile. The values below correspond to "no normalization" for simplicity.
         self.dataset_statistics = {
             "dummy_dataset": {
-                "action": {"q01": np.zeros((7,), dtype=np.float32), "q99": np.ones((7,), dtype=np.float32)}
+                "action": {
+                    "q01": np.zeros((7,), dtype=np.float32),
+                    "q99": np.ones((7,), dtype=np.float32),
+                }
             }
         }
 
@@ -204,21 +230,28 @@ class DummyDataset(Dataset):
 
     def __getitem__(self, idx):
         # TODO =>> Load image, action and instruction from disk -- we use dummy values
-        image = Image.fromarray(np.asarray(np.random.rand(224, 224, 3) * 255.0, dtype=np.uint8))
+        image = Image.fromarray(
+            np.asarray(np.random.rand(224, 224, 3) * 255.0, dtype=np.uint8)
+        )
         action = np.asarray(np.random.rand(7), dtype=np.float32)
         instruction = "do something spectacular"
 
         # Add instruction to VLA prompt
         prompt_builder = self.prompt_builder_fn("openvla")
         conversation = [
-            {"from": "human", "value": f"What action should the robot take to {instruction}?"},
+            {
+                "from": "human",
+                "value": f"What action should the robot take to {instruction}?",
+            },
             {"from": "gpt", "value": self.action_tokenizer(action)},
         ]
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
 
         # Tokenize (w/ `base_tokenizer`)
-        input_ids = self.base_tokenizer(prompt_builder.get_prompt(), add_special_tokens=True).input_ids
+        input_ids = self.base_tokenizer(
+            prompt_builder.get_prompt(), add_special_tokens=True
+        ).input_ids
         labels = list(input_ids)
 
         # Tensorize =>> Run Image Transform to get `pixel_values` =>> Return
