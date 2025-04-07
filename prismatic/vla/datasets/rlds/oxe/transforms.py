@@ -841,6 +841,20 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
+def cmu_aidm_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    gripper_action = trajectory["action"][..., -1]
+    gripper_action = invert_gripper_actions(rel2abs_gripper_actions(gripper_action))
+
+    trajectory["action"] = tf.concat(
+        [
+            tf.cast(trajectory["action"][..., :-1], tf.float32),
+            gripper_action[:, None],
+        ],
+        axis=1,
+    )
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "bridge_oxe": bridge_oxe_dataset_transform,
@@ -919,4 +933,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "libero_object_no_noops": libero_dataset_transform,
     "libero_goal_no_noops": libero_dataset_transform,
     "libero_10_no_noops": libero_dataset_transform,
+    "cmu_aidm": cmu_aidm_dataset_transform,
 }
