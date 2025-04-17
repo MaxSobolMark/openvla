@@ -841,7 +841,26 @@ def libero_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
+def filter_zero_actions(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    # Find batch elements where 'action' is not all zeros
+    action_norms = tf.reduce_sum(tf.abs(trajectory["action"]), axis=-1)
+    valid_indices = tf.where(action_norms > 0)
+
+    # Create a new trajectory with only the valid timesteps
+    filtered_trajectory = {}
+    for key, tensor in trajectory.items():
+        # Handle different tensor shapes appropriately
+        if tensor.shape[0] == action_norms.shape[0]:  # Same batch dimension as action
+            filtered_trajectory[key] = tf.gather(tensor, valid_indices[:, 0])
+        else:
+            # For tensors with different batch dimensions, keep them as is
+            filtered_trajectory[key] = tensor
+
+    return filtered_trajectory
+
+
 def cmu_aidm_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    trajectory = filter_zero_actions(trajectory)
     gripper_action = trajectory["action"][..., -1]
     gripper_action = invert_gripper_actions(rel2abs_gripper_actions(gripper_action))
 
